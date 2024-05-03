@@ -203,6 +203,7 @@ class LLMEngine:
         # NOTE: the cache_config here have been updated with the numbers of
         # GPU and CPU blocks, which are profiled in the distributed executor.
         self.scheduler = Scheduler(scheduler_config, cache_config, lora_config)
+        self.vtc = self.scheduler.vtc
 
         # Metric Logging.
         if self.log_stats:
@@ -338,6 +339,7 @@ class LLMEngine:
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
         multi_modal_data: Optional[MultiModalData] = None,
+        user_id: Optional[int] = 0 # distinguish clients
     ) -> None:
         """Add a request to the engine's request pool.
 
@@ -422,7 +424,7 @@ class LLMEngine:
 
         # Create the sequence group.
         seq_group = SequenceGroup(request_id, [seq], sampling_params,
-                                  arrival_time, lora_request, multi_modal_data)
+                                  arrival_time, lora_request, multi_modal_data, user_id=user_id)
 
         # Add the sequence group to the scheduler.
         self.scheduler.add_seq_group(seq_group)

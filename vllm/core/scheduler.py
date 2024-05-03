@@ -13,7 +13,10 @@ from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
                            SequenceGroupMetadata, SequenceStatus)
 from vllm.utils import merge_dicts
 
+from vllm.core.vtc import VTC
+
 logger = init_logger(__name__)
+
 
 
 class PreemptionMode(enum.Enum):
@@ -285,6 +288,12 @@ class Scheduler:
         self.prev_prompt = False
         # Latency of the last prompt step
         self.last_prompt_latency = 0.0
+        
+        
+        # virtual token counter
+        self.use_fairness_policy = True
+        self.vtc = VTC()
+        self.last_uid_left = 0 # left from waiting
 
     @property
     def lora_enabled(self) -> bool:
@@ -297,6 +306,7 @@ class Scheduler:
 
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
         # Add sequence groups to the waiting queue.
+        self.vtc.new_seq_come(seq_group, self.waiting, self.last_uid_left)
         self.waiting.append(seq_group)
 
     def abort_seq_group(self, request_id: Union[str, Iterable[str]]) -> None:
@@ -385,7 +395,10 @@ class Scheduler:
         # In this case, the policy is responsible for deciding which sequence
         # groups to preempt.
         now = time.time()
-        running_queue = policy.sort_by_priority(now, running_queue)
+        if self.use_fairness_policy:
+            running_queue = policy.sort_by_priority(self.vtc, running_queue)
+        else:
+            running_queue = policy.sort_by_priority(now, running_queue)
 
         while running_queue:
             seq_group = running_queue[0]
@@ -499,7 +512,10 @@ class Scheduler:
         decode_seq_groups: List[ScheduledSequenceGroup] = []
         prefill_seq_groups: List[ScheduledSequenceGroup] = []
         now = time.time()
-        swapped_queue = policy.sort_by_priority(now, swapped_queue)
+        if self.use_fairness_policy:
+            swapped_queue = policy.sort_by_priority(self.vtc, swapped_queue)
+        else:
+            swapped_queue = policy.sort_by_priority(now, swapped_queue)
 
         leftover_swapped: Deque[SequenceGroup] = deque()
         while swapped_queue:
@@ -714,7 +730,10 @@ class Scheduler:
             remaining_waiting, prefills = self._schedule_prefills(
                 self.waiting, budget, curr_loras, enable_chunking=False)
 
-        fcfs_policy = PolicyFactory.get_policy(policy_name="fcfs")
+        if self.use_fairness_policy:
+            fcfs_policy = PolicyFactory.get_policy(policy_name='fair')
+        else:
+            fcfs_policy = PolicyFactory.get_policy(policy_name="fcfs")
         # Don't schedule decodes if prefills are scheduled.
         # NOTE: If `_schedule_prefills` doesn't enable chunking, self.running
         # only contains decode requests, not chunked prefills.
@@ -797,7 +816,10 @@ class Scheduler:
             self.swapped, SchedulerSwappedInOutputs.create_empty())
 
         # Decoding should be always scheduled first by fcfs.
-        fcfs_policy = PolicyFactory.get_policy(policy_name="fcfs")
+        if self.use_fairness_policy:
+            fcfs_policy = PolicyFactory.get_policy(policy_name='fair')
+        else:
+            fcfs_policy = PolicyFactory.get_policy(policy_name="fcfs")
         remaining_running, running_scheduled = self._schedule_running(
             self.running,
             budget,
@@ -887,7 +909,11 @@ class Scheduler:
         # Schedule sequence groups.
         # This function call changes the internal states of the scheduler
         # such as self.running, self.swapped, and self.waiting.
+        old_waiting = self.waiting.copy()
         scheduler_outputs = self._schedule()
+        if len(self.waiting) == 0 and len(old_waiting) > 0:
+            self.last_uid_left = old_waiting[0].user_id
+
         now = time.time()
 
         # Create input data structures.
@@ -916,6 +942,7 @@ class Scheduler:
             # It assumes the scheduled_seq_groups is ordered by
             # prefill < decoding.
             is_prompt = seq_group.is_prefill()
+            user_id = seq_group.user_id
             seq_group_metadata = SequenceGroupMetadata(
                 request_id=seq_group.request_id,
                 is_prompt=is_prompt,
@@ -932,6 +959,7 @@ class Scheduler:
                 # `multi_modal_data` will be None.
                 multi_modal_data=seq_group.multi_modal_data
                 if scheduler_outputs.num_prefill_groups > 0 else None,
+                user_id=user_id
             )
             seq_group_metadata_list.append(seq_group_metadata)
 
@@ -943,6 +971,7 @@ class Scheduler:
             self.block_manager.mark_blocks_as_computed(
                 scheduled_seq_group.seq_group)
 
+        self.vtc.update_count(seq_group_metadata_list=seq_group_metadata_list)
         return seq_group_metadata_list, scheduler_outputs
 
     def fork_seq(self, parent_seq: Sequence, child_seq: Sequence) -> None:
