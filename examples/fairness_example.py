@@ -2,42 +2,41 @@ import argparse
 from typing import List, Tuple
 
 from vllm import EngineArgs, LLMEngine, RequestOutput, SamplingParams
+from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
 
 import nltk
 nltk.download('words')
 from nltk.corpus import words
 import random
 import time
-
-num_users = 1
-min_request_len = 90
-max_request_len = 100
-min_generation_len = 50
-max_generation_len = 200
-test_num = 1000
+import numpy as np
 
 
-def create_test_prompt_nonsense() -> List[Tuple[str, SamplingParams]]:
+test_num = 500
+
+
+def create_test_prompt_nonsense(args: argparse.Namespace) -> List[Tuple[str, SamplingParams]]:
     english_words = words.words()
-    length = random.randint(min_generation_len, max_generation_len)
-    user_id = random.randint(0,num_users-1)
-    return (' '.join(random.choice(english_words) for _ in range(length)),
-         SamplingParams(temperature=0.0, logprobs=1, prompt_logprobs=1, 
-                        min_tokens = min_generation_len, 
-                        max_tokens=max_generation_len),
-         user_id)
+    length = args.input_len
+    user_id = random.randint(0,args.num_users-1)
+    return (np.random.randint(10000, size=(length)).tolist(),
+            SamplingParams(temperature=0.0, logprobs=1, prompt_logprobs=1, 
+                        min_tokens = args.min_output_len, 
+                        max_tokens=args.max_output_len),
+            user_id,
+        )
 
-def process_requests(engine: LLMEngine):
+def process_requests(engine: LLMEngine, args: argparse.Namespace):
     """Continuously process a list of prompts and handle the outputs."""
     request_id = 0
     test_prompts = []
     for i in range(test_num):
-        test_prompts.append(create_test_prompt_nonsense())
+        test_prompts.append(create_test_prompt_nonsense(args))
 
     while test_prompts or engine.has_unfinished_requests():
         if test_prompts:
-            prompt, sampling_params, user_id = test_prompts.pop(0)
-            engine.add_request(str(request_id), prompt, sampling_params, user_id=user_id)
+            prompt_token_ids, sampling_params, user_id = test_prompts.pop(0)
+            engine.add_request(str(request_id), None, sampling_params, prompt_token_ids, user_id=user_id)
             request_id += 1
 
         request_outputs: List[RequestOutput] = engine.step()
@@ -51,28 +50,34 @@ def process_requests(engine: LLMEngine):
 def initialize_engine(args: argparse.Namespace) -> LLMEngine:
     """Initialize the LLMEngine from the command line arguments."""
     engine_args = EngineArgs.from_cli_args(args)
-    engine_args.enable_chunked_prefill = True
     engine_args.disable_log_stats = True
-    engine_args.use_fairness_policy = False
     return LLMEngine.from_engine_args(engine_args)
 
 
 def main(args: argparse.Namespace):
-    nltk.download('words')
+    # nltk.download('words')
 
     """Main function that sets up and runs the prompt processing."""
     engine = initialize_engine(args)
-    process_requests(engine)
+    process_requests(engine, args)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description='Demo on using the LLMEngine class directly')
     parser = EngineArgs.add_cli_args(parser)
+
+    parser.add_argument('--use-fairness-policy', '-fair',
+                        action='store_true')
+    parser.add_argument('--num-users', 
+                        type=int,
+                        default=1)
+    parser.add_argument('--min-output-len', type=int, default=1)
+    parser.add_argument('--max-output-len', type=int, default=128)
+    parser.add_argument('--input-len', type=int, default=128)
     args = parser.parse_args()
 
-    # args.model = 'facebook/opt-1.3b'
-    args.model = 'meta-llama/Llama-2-7b-hf'
-    args.tensor_parallel_size = 1
+    # 'facebook/opt-1.3b'
+    # 'meta-llama/Llama-2-7b-hf'
 
     main(args)

@@ -28,7 +28,7 @@ class VTC:
                                                   self.vtc[last_uid_left])
             else:
                 others_count_min = 2**31
-                for seq in self.waiting:
+                for seq in waiting:
                     temp = self.vtc[seq.user_id]
                     if others_count_min > temp:
                         others_count_min = temp

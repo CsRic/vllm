@@ -1,1 +1,1 @@
-python benchmark_fairness.py --model 'meta-llama/Llama-2-7b-hf' -tp 4
+python fairness_example.py --model 'meta-llama/Llama-2-7b-hf' -tp 4 -fair --num-users 4 --gpu-memory-utilization 0.7
