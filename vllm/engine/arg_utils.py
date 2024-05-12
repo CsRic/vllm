@@ -74,6 +74,9 @@ class EngineArgs:
     speculative_model: Optional[str] = None
     num_speculative_tokens: Optional[int] = None
     speculative_max_model_len: Optional[int] = None
+    
+    # Fairness
+    use_fairness_policy:bool =False
 
     def __post_init__(self):
         if self.tokenizer is None:

@@ -245,6 +245,7 @@ class Scheduler:
         scheduler_config: SchedulerConfig,
         cache_config: CacheConfig,
         lora_config: Optional[LoRAConfig],
+        use_fairness_policy = False,
     ) -> None:
         self.scheduler_config = scheduler_config
         self.cache_config = cache_config
@@ -291,7 +292,7 @@ class Scheduler:
         
         
         # virtual token counter
-        self.use_fairness_policy = True
+        self.use_fairness_policy = use_fairness_policy
         self.vtc = VTC()
         self.last_uid_left = 0 # left from waiting
 
@@ -306,7 +307,8 @@ class Scheduler:
 
     def add_seq_group(self, seq_group: SequenceGroup) -> None:
         # Add sequence groups to the waiting queue.
-        self.vtc.new_seq_come(seq_group, self.waiting, self.last_uid_left)
+        if self.use_fairness_policy:
+            self.vtc.new_seq_come(seq_group, self.waiting, self.last_uid_left)
         self.waiting.append(seq_group)
 
     def abort_seq_group(self, request_id: Union[str, Iterable[str]]) -> None:
@@ -361,7 +363,6 @@ class Scheduler:
         enable_chunking: bool = False,
     ) -> Tuple[deque, SchedulerRunningOutputs]:
         """Schedule sequence groups that are running.
-
         Running queue should include decode and chunked prefill requests.
 
         Args:
@@ -376,7 +377,7 @@ class Scheduler:
                 chunked number of tokens are scheduled  if
                 `budget.num_batched_tokens` has not enough capacity to schedule
                 all tokens.
-    
+
         Returns:
             A tuple of remaining running queue (should be always 0) after
             scheduling and SchedulerRunningOutputs.
@@ -971,7 +972,8 @@ class Scheduler:
             self.block_manager.mark_blocks_as_computed(
                 scheduled_seq_group.seq_group)
 
-        self.vtc.update_count(seq_group_metadata_list=seq_group_metadata_list)
+        if self.use_fairness_policy:
+            self.vtc.update_count(seq_group_metadata_list=seq_group_metadata_list)
         return seq_group_metadata_list, scheduler_outputs
 
     def fork_seq(self, parent_seq: Sequence, child_seq: Sequence) -> None:

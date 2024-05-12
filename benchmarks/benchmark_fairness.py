@@ -30,7 +30,9 @@ def main(args: argparse.Namespace):
               ray_workers_use_nsight=args.ray_workers_use_nsight,
               enable_chunked_prefill=args.enable_chunked_prefill,
               download_dir=args.download_dir,
-              block_size=args.block_size,)
+              block_size=args.block_size,
+              use_fairness_policy=args.use_fairness_policy,
+              )
 
     sampling_params = SamplingParams(
         n=args.n,
@@ -39,6 +41,7 @@ def main(args: argparse.Namespace):
         use_beam_search=args.use_beam_search,
         ignore_eos=True,
         max_tokens=args.output_len,
+        min_tokens=args.min_output_len,
     )
     print(sampling_params)
     dummy_prompt_token_ids = np.random.randint(10000,
@@ -191,5 +194,12 @@ if __name__ == '__main__':
                         default=None,
                         help='directory to download and load the weights, '
                         'default to the default cache dir of huggingface')
+    parser.add_argument('--use-fairness-policy', '-fair',
+                        action='store_true')
+    parser.add_argument('--num-users', 
+                        type=int,
+                        default=1)
+
+    parser.add_argument('--min-output-len', type=int, default=1)
     args = parser.parse_args()
     main(args)

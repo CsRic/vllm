@@ -1,0 +1,1 @@
+python benchmark_fairness.py --model 'meta-llama/Llama-2-7b-hf' -tp 4
