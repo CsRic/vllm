@@ -516,6 +516,9 @@ class EngineArgs:
             "prometheus metrics, if multiple names provided, metrics"
             "tag will take the first one.")
 
+        parser.add_argument('--use-fairness-policy', '-fair',
+                    action='store_true')
+
         return parser
 
     @classmethod

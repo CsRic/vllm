@@ -443,6 +443,7 @@ class LLMEngine:
                 arrival_time,
                 lora_request,
                 multi_modal_data,
+                user_id,
             )
         elif isinstance(params, PoolingParams):
             seq_group = self._create_sequence_group_with_pooling(
@@ -452,6 +453,7 @@ class LLMEngine:
                 arrival_time,
                 lora_request,
                 multi_modal_data,
+                user_id
             )
         else:
             raise ValueError(
@@ -468,6 +470,7 @@ class LLMEngine:
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
         multi_modal_data: Optional[MultiModalData] = None,
+        user_id = 0,
     ) -> SequenceGroup:
         """Creates a SequenceGroup with SamplingParams."""
         max_logprobs = self.get_model_config().max_logprobs
@@ -507,6 +510,7 @@ class LLMEngine:
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
         multi_modal_data: Optional[MultiModalData] = None,
+        user_id = 0
     ) -> SequenceGroup:
         """Creates a SequenceGroup with PoolingParams."""
         # Defensive copy of PoolingParams, which are used by the pooler
@@ -517,7 +521,9 @@ class LLMEngine:
                                   arrival_time=arrival_time,
                                   lora_request=lora_request,
                                   multi_modal_data=multi_modal_data,
-                                  pooling_params=pooling_params)
+                                  pooling_params=pooling_params,
+                                  user_id=user_id)
+        self.scheduler.add_seq_group(seq_group)
         return seq_group
 
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:
