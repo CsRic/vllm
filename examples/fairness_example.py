@@ -76,8 +76,7 @@ if __name__ == '__main__':
         description='Demo on using the LLMEngine class directly')
     parser = EngineArgs.add_cli_args(parser)
 
-    parser.add_argument('--use-fairness-policy', '-fair',
-                        action='store_true')
+
     parser.add_argument('--num-users', 
                         type=int,
                         default=1)
