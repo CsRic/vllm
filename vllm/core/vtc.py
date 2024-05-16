@@ -43,4 +43,4 @@ class VTC:
             else:
                 self.vtc[metadata.user_id] += self.w_q
 
-        print(self.vtc)
+        # print(self.vtc)

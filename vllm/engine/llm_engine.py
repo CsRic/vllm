@@ -220,7 +220,6 @@ class LLMEngine:
         # NOTE: the cache_config here have been updated with the numbers of
         # GPU and CPU blocks, which are profiled in the distributed executor.
         self.scheduler = Scheduler(scheduler_config, cache_config, lora_config, use_fairness_policy=use_fairness_policy)
-        self.vtc = self.scheduler.vtc
 
         # Metric Logging.
         if self.log_stats:
@@ -499,7 +498,6 @@ class LLMEngine:
                                   lora_request=lora_request,
                                   multi_modal_data=multi_modal_data,
                                   user_id=user_id)
-        self.scheduler.add_seq_group(seq_group)
         return seq_group
 
     def _create_sequence_group_with_pooling(
@@ -523,7 +521,6 @@ class LLMEngine:
                                   multi_modal_data=multi_modal_data,
                                   pooling_params=pooling_params,
                                   user_id=user_id)
-        self.scheduler.add_seq_group(seq_group)
         return seq_group
 
     def abort_request(self, request_id: Union[str, Iterable[str]]) -> None:

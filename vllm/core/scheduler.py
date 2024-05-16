@@ -321,13 +321,6 @@ class Scheduler:
         self.artificial_preempt_cnt = (ARTIFICIAL_PREEMPTION_MAX_CNT
                                        if self.enable_artificial_preemption
                                        else 0)
-
-        # The following field is test-only. It is used to inject artificial
-        # preemption.
-        self.enable_artificial_preemption = ENABLE_ARTIFICIAL_PREEMPT
-        self.artificial_preempt_cnt = (ARTIFICIAL_PREEMPTION_MAX_CNT
-                                       if self.enable_artificial_preemption
-                                       else 0)
         self.num_cumulative_preemption: int = 0
 
     @property
@@ -397,6 +390,7 @@ class Scheduler:
         enable_chunking: bool = False,
     ) -> Tuple[deque, SchedulerRunningOutputs]:
         """Schedule sequence groups that are running.
+
         Running queue should include decode and chunked prefill requests.
 
         Args:
@@ -411,7 +405,7 @@ class Scheduler:
                 chunked number of tokens are scheduled  if
                 `budget.num_batched_tokens` has not enough capacity to schedule
                 all tokens.
-
+    
         Returns:
             A tuple of remaining running queue (should be always 0) after
             scheduling and SchedulerRunningOutputs.
@@ -961,10 +955,14 @@ class Scheduler:
         # Schedule sequence groups.
         # This function call changes the internal states of the scheduler
         # such as self.running, self.swapped, and self.waiting.
-        old_waiting = self.waiting.copy()
+        if self.use_fairness_policy:
+            old_waiting = self.waiting.copy()
+
         scheduler_outputs = self._schedule()
-        if len(self.waiting) == 0 and len(old_waiting) > 0:
-            self.last_uid_left = old_waiting[0].user_id
+
+        if self.use_fairness_policy:
+            if len(self.waiting) == 0 and len(old_waiting) > 0:
+                self.last_uid_left = old_waiting[0].user_id
 
         now = time.time()
 

@@ -108,3 +108,12 @@ class UserLog:
             print(f"avg_total_time: {p3}")
             print(f"avg_per_token_time: {p4}")
             print(f"{user_id},{p0},{p1},{p2},{p3},{p4}")
+
+    def clean_finished(self):
+        keys_to_remove = [key for key, value in self.request_profiles.items() if value.is_finish]
+        remaining_profiles  = {key: value for key, value in self.request_profiles.items() if not value.is_finish}
+        self.request_profiles = remaining_profiles
+        for request_list in self.user_id_to_request_ids.values():
+            for key in keys_to_remove:
+                if key in request_list:
+                    request_list.remove(key)

@@ -9,11 +9,10 @@ from vllm.core.user_log import UserLog
 import random
 import time
 import numpy as np
+import sys
 
-
-def create_test_prompt_nonsense(args: argparse.Namespace) -> List[Tuple[str, SamplingParams]]:
+def create_test_prompt_nonsense(args: argparse.Namespace, user_id=0) -> List[Tuple[str, SamplingParams]]:
     length = args.input_len
-    user_id = random.randint(0,args.num_users-1)
     return (np.random.randint(10000, size=(length)).tolist(),
             SamplingParams(temperature=0.0, logprobs=1, prompt_logprobs=1, 
                         min_tokens=args.min_output_len, 
@@ -25,34 +24,40 @@ def process_requests(engine: LLMEngine, args: argparse.Namespace):
     """Continuously process a list of prompts and handle the outputs."""
     request_id = 0
     test_prompts = []
-    for i in range(args.test_num * args.num_users):
-        test_prompts.append(create_test_prompt_nonsense(args))
+    for i in range(args.test_num):
+        for user_id in range(args.num_users):
+            test_prompts.append(create_test_prompt_nonsense(args, user_id))
     user_log = UserLog()
+    current_interval = 0.0
+    last_request_time = time.time()
+    step_count = 1 # when accumulated to args.snapshot * args.num_users, reset to 1
 
-    test_num_count = 0
-    step_count = 0
-
-    while len(test_prompts) > 0:
-        prompt_token_ids, sampling_params, user_id = test_prompts.pop(0)
-        engine.add_request(str(request_id), None, sampling_params, prompt_token_ids, user_id=user_id)
-        if test_num_count >= args.warm_up * args.num_users:
-            user_log.submit_request(request_id, user_id, len(prompt_token_ids), time.time())
-        else:
-            engine.step()
-        request_id += 1
-        test_num_count += 1
-    while step_count < args.test_num * args.num_users * args.min_output_len - 2 and \
-        engine.has_unfinished_requests():
-        request_outputs: List[RequestOutput] = engine.step()
-        step_count += 1
-        for request_output in request_outputs:
-            # one token generated
-            is_finish = False
-            if request_output.finished:
-                # print(request_output)
-                is_finish = True
-                print(f"finish {request_output.request_id}")
-            user_log.add_timestamp(int(request_output.request_id), time.time(), is_finish)
+    while len(test_prompts) > 0 or engine.has_unfinished_requests():
+        current_interval += time.time() - last_request_time
+        last_request_time = time.time()
+        while len(test_prompts) > 0 and current_interval >= args.interval:
+            for i in range(args.num_users):
+                # each user send one request per interval
+                prompt_token_ids, sampling_params, user_id = test_prompts.pop(0)
+                user_log.submit_request(request_id, user_id, len(prompt_token_ids), time.time())
+                engine.add_request(str(request_id), None, sampling_params, prompt_token_ids, user_id=user_id)
+                request_id += 1
+            current_interval -= args.interval
+        if engine.has_unfinished_requests():
+            request_outputs: List[RequestOutput] = engine.step()
+            for request_output in request_outputs:
+                # one token generated
+                is_finish = False
+                if request_output.finished:
+                    step_count += 1
+                    is_finish = True
+                    sys.stdout.write(f"\rfinish {request_output.request_id}")
+                    sys.stdout.flush()
+                user_log.add_timestamp(int(request_output.request_id), time.time(), is_finish)
+                if(step_count >= args.snapshot * args.num_users):
+                    user_log.print_summary()
+                    step_count = 1
+                    # user_log.clean_finished()
     
     user_log.print_summary()
 
@@ -84,7 +89,8 @@ if __name__ == '__main__':
     parser.add_argument('--max-output-len', type=int, default=128)
     parser.add_argument('--input-len', type=int, default=128)
     parser.add_argument('--test-num', type=int, default=100)
-    parser.add_argument('--warm-up', type=int, default=0)
+    parser.add_argument('--snapshot', type=int, default=50)
+    parser.add_argument('--interval', type=float, default=0)
     args = parser.parse_args()
 
     # 'facebook/opt-1.3b'
