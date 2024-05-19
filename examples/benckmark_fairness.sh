@@ -52,3 +52,25 @@ python fairness_example.py --model 'meta-llama/Llama-2-7b-hf' \
  --max-output-len 128 \
  --input-len 128 \
  --interval 0.01
+
+
+python llm_engine_example_heavy.py --model 'meta-llama/Llama-2-7b-hf' \
+ -tp 4 \
+ --enable-chunked-prefill \
+ --gpu-memory-utilization 0.7 \
+ --num-users 1 \
+ --test-num 100 \
+ --snapshot 25 \
+ --min-output-len 128 \
+ --max-output-len 128 \
+ --input-len 128
+
+python llm_engine_example_heavy.py --model 'meta-llama/Llama-2-7b-hf' \
+ -tp 4 \
+ --gpu-memory-utilization 0.7 \
+ --num-users 1 \
+ --test-num 200 \
+ --snapshot 25 \
+ --min-output-len 128 \
+ --max-output-len 128 \
+ --input-len 128

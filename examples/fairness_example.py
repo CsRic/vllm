@@ -47,7 +47,7 @@ def process_requests(engine: LLMEngine, args: argparse.Namespace):
             request_outputs: List[RequestOutput] = engine.step()
             for request_output in request_outputs:
                 # one token generated
-                is_finish = False
+                is_finish = False 
                 if request_output.finished:
                     step_count += 1
                     is_finish = True
@@ -58,7 +58,7 @@ def process_requests(engine: LLMEngine, args: argparse.Namespace):
                     user_log.print_summary()
                     step_count = 1
                     # user_log.clean_finished()
-    
+
     user_log.print_summary()
 
 def initialize_engine(args: argparse.Namespace) -> LLMEngine:
