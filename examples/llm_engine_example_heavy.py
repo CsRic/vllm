@@ -49,10 +49,12 @@ def process_requests(engine: LLMEngine,
             request_id += 1
 
         request_outputs: List[RequestOutput] = engine.step()
+        print(f"step at time {time.time()}, output num: {len(request_outputs)}")
 
         for request_output in request_outputs:
             if request_output.finished:
-                print(request_output)
+                print(f"finished: {request_output.request_id}")
+                pass
 
 
 def initialize_engine(args: argparse.Namespace) -> LLMEngine:
