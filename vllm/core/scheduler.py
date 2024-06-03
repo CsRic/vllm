@@ -398,7 +398,7 @@ class Scheduler:
                 chunked number of tokens are scheduled  if
                 `budget.num_batched_tokens` has not enough capacity to schedule
                 all tokens.
-    
+
         Returns:
             A tuple of remaining running queue (should be always 0) after
             scheduling and SchedulerRunningOutputs.
@@ -779,9 +779,9 @@ class Scheduler:
                 self.waiting, budget, curr_loras, enable_chunking=False)
 
         if self.use_fairness_policy:
-            fcfs_policy = PolicyFactory.get_policy(policy_name='fair')
+            policy = PolicyFactory.get_policy(policy_name='fair')
         else:
-            fcfs_policy = PolicyFactory.get_policy(policy_name="fcfs")
+            policy = PolicyFactory.get_policy(policy_name="fcfs")
         # Don't schedule decodes if prefills are scheduled.
         # NOTE: If `_schedule_prefills` doesn't enable chunking, self.running
         # only contains decode requests, not chunked prefills.
@@ -790,7 +790,7 @@ class Scheduler:
                 self.running,
                 budget,
                 curr_loras,
-                fcfs_policy,
+                policy,
                 enable_chunking=False)
 
             # If any sequence group is preempted, do not swap in any sequence
@@ -798,7 +798,7 @@ class Scheduler:
             if len(running_scheduled.preempted) + len(
                     running_scheduled.swapped_out) == 0:
                 remaining_swapped, swapped_in = self._schedule_swapped(
-                    self.swapped, budget, curr_loras, fcfs_policy)
+                    self.swapped, budget, curr_loras, policy)
 
         assert (budget.num_batched_tokens <=
                 self.scheduler_config.max_num_batched_tokens)
@@ -870,14 +870,14 @@ class Scheduler:
 
         # Decoding should be always scheduled first by fcfs.
         if self.use_fairness_policy:
-            fcfs_policy = PolicyFactory.get_policy(policy_name='fair')
+            policy = PolicyFactory.get_policy(policy_name='fair')
         else:
-            fcfs_policy = PolicyFactory.get_policy(policy_name="fcfs")
+            policy = PolicyFactory.get_policy(policy_name="fcfs")
         remaining_running, running_scheduled = self._schedule_running(
             self.running,
             budget,
             curr_loras,
-            fcfs_policy,
+            policy,
             enable_chunking=True)
 
         # Schedule swapped out requests.
@@ -885,7 +885,7 @@ class Scheduler:
         if len(running_scheduled.preempted) + len(
                 running_scheduled.swapped_out) == 0:
             remaining_swapped, swapped_in = self._schedule_swapped(
-                self.swapped, budget, curr_loras, fcfs_policy)
+                self.swapped, budget, curr_loras, policy)
 
         # Schedule new prefills.
         remaining_waiting, prefills = self._schedule_prefills(

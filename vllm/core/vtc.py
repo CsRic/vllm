@@ -2,7 +2,7 @@
 from typing import Deque, Dict, Iterable, List, Optional, Set, Tuple, Union
 from vllm.sequence import (Sequence, SequenceData, SequenceGroup,
                            SequenceGroupMetadata, SequenceStatus)
-
+from collections import deque
 
 class VTC:
     def __init__(self, w_p = 1, w_q = 2):
@@ -10,12 +10,19 @@ class VTC:
         self.vtc[0] = 0
         self.w_p = w_p
         self.w_q = w_q
-
-    def new_seq_come(self, seq_group, waiting: Deque[SequenceGroup], last_uid_left = 0):
+        
+        # user_id to requests
+        self.user_id_to_request:Dict[int, Deque[SequenceGroup]] = {} # naturally first come first serve
+    
+    def new_seq_come(self, seq_group: SequenceGroup, waiting: Deque[SequenceGroup], last_uid_left = 0):
         # bring up awaken user or new user
         if seq_group.user_id not in self.vtc:
             self.vtc[seq_group.user_id] = 0
-        
+        if seq_group.user_id not in self.user_id_to_request:
+            self.user_id_to_request[seq_group.user_id] = deque([seq_group])
+        else:
+            self.user_id_to_request[seq_group.user_id].append(seq_group)
+
         user_not_waiting = True
         for seq in waiting:
             if seq.user_id == seq_group.user_id:
@@ -44,3 +51,15 @@ class VTC:
                 self.vtc[metadata.user_id] += self.w_q
 
         # print(self.vtc)
+    def free_finished_seq_groups(self, seq_group_list: Deque[SequenceGroup]):
+        for seq_group in seq_group_list:
+            if seq_group.is_finished():
+                self.user_id_to_request[seq_group.user_id].remove(seq_group)
+        
+
+    def get_highest_priority_request(self):
+        sorted_user_ids = sorted(self.vtc, key=self.vtc.get)
+        for user_id in sorted_user_ids:
+            if len(self.user_id_to_request[user_id]) == 0:
+                continue
+            return self.user_id_to_request[user_id][0]

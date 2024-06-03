@@ -11,12 +11,10 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
 
+import threading
 
 def main(args: argparse.Namespace):
     print(args)
-
-    # NOTE(woosuk): If the request cannot be processed in a single batch,
-    # the engine will automatically process the request in multiple batches.
     llm = LLM(model=args.model,
               tokenizer=args.tokenizer,
               quantization=args.quantization,
@@ -31,7 +29,12 @@ def main(args: argparse.Namespace):
               enable_chunked_prefill=args.enable_chunked_prefill,
               download_dir=args.download_dir,
               block_size=args.block_size,
+
               use_fairness_policy=args.use_fairness_policy,
+
+              use_csric_log=True,
+              snapshot=args.snapshot,
+              num_users=args.num_users,
               )
 
     sampling_params = SamplingParams(
@@ -40,61 +43,52 @@ def main(args: argparse.Namespace):
         top_p=1.0,
         use_beam_search=args.use_beam_search,
         ignore_eos=True,
-        max_tokens=args.output_len,
+        max_tokens=args.max_output_len,
         min_tokens=args.min_output_len,
     )
     print(sampling_params)
     dummy_prompt_token_ids = np.random.randint(10000,
-                                               size=(args.batch_size,
+                                               size=(args.test_num,
                                                      args.input_len))
-    dummy_prompt_token_ids = dummy_prompt_token_ids.tolist()
+    test_prompts = dummy_prompt_token_ids.tolist()
 
-    def run_to_completion(profile_dir: Optional[str] = None):
-        if profile_dir:
-            with torch.profiler.profile(
-                    activities=[
-                        torch.profiler.ProfilerActivity.CPU,
-                        torch.profiler.ProfilerActivity.CUDA,
-                    ],
-                    on_trace_ready=torch.profiler.tensorboard_trace_handler(
-                        str(profile_dir))) as p:
-                llm.generate(prompt_token_ids=dummy_prompt_token_ids,
-                             sampling_params=sampling_params,
-                             use_tqdm=False)
-            print(p.key_averages())
-        else:
-            start_time = time.perf_counter()
-            llm.generate(prompt_token_ids=dummy_prompt_token_ids,
-                         sampling_params=sampling_params,
-                         use_tqdm=False)
-            end_time = time.perf_counter()
-            latency = end_time - start_time
-            return latency
+    exit_event = threading.Event()
 
-    print("Warming up...")
-    for _ in tqdm(range(args.num_iters_warmup), desc="Warmup iterations"):
-        run_to_completion(profile_dir=None)
+    def run_thread():
+        while not exit_event.is_set():
+            llm._run_engine(False)
+        llm._run_engine(False)
 
-    if args.profile:
-        profile_dir = args.profile_result_dir
-        if not profile_dir:
-            profile_dir = Path(
-                "."
-            ) / "vllm_benchmark_result" / f"latency_result_{time.time()}"
-        print(f"Profiling (results will be saved to '{profile_dir}')...")
-        run_to_completion(profile_dir=profile_dir)
-        return
+    def request_thread():
+        current_interval = 0.0
+        last_request_time = time.time()
+        while len(test_prompts) > 0:
+            current_interval += time.time() - last_request_time
+            last_request_time = time.time()
+            while len(test_prompts) > 0 and current_interval >= args.interval:
+                prompt_token_ids = test_prompts.pop(0)
+                for i in range(args.num_users):
+                    # llm.generate(prompt_token_ids=[prompt_token_ids],
+                    #              sampling_params=sampling_params,
+                    #              use_tqdm=False,
+                    #              user_id=i,)
+                    requests_data = llm._validate_and_prepare_requests(
+                                                        prompts=None,
+                                                        params = sampling_params,
+                                                       prompt_token_ids=[prompt_token_ids],
+                                                       user_id=i)
+                    for request_data in requests_data:
+                        llm._add_request(**request_data)
+                current_interval -= args.interval
+        exit_event.set()
+    
+    t1 = threading.Thread(target=run_thread)
+    t2 = threading.Thread(target=request_thread)
 
-    # Benchmark.
-    latencies = []
-    for _ in tqdm(range(args.num_iters), desc="Profiling iterations"):
-        latencies.append(run_to_completion(profile_dir=None))
-    latencies = np.array(latencies)
-    percentages = [10, 25, 50, 75, 90]
-    percentiles = np.percentile(latencies, percentages)
-    print(f'Avg latency: {np.mean(latencies)} seconds')
-    for percentage, percentile in zip(percentages, percentiles):
-        print(f'{percentage}% percentile latency: {percentile} seconds')
+    t1.start()
+    t2.start()
+    t2.join()
+    t1.join()
 
 
 if __name__ == '__main__':
@@ -194,12 +188,25 @@ if __name__ == '__main__':
                         default=None,
                         help='directory to download and load the weights, '
                         'default to the default cache dir of huggingface')
+    parser.add_argument(
+            '--gpu-memory-utilization',
+            type=float,
+            default=0.9,
+            help='The fraction of GPU memory to be used for the model '
+            'executor, which can range from 0 to 1. For example, a value of '
+            '0.5 would imply 50%% GPU memory utilization. If unspecified, '
+            'will use the default value of 0.9.')
+
     parser.add_argument('--use-fairness-policy', '-fair',
                         action='store_true')
     parser.add_argument('--num-users', 
                         type=int,
                         default=1)
-
     parser.add_argument('--min-output-len', type=int, default=1)
+    parser.add_argument('--max-output-len', type=int, default=128)
+    parser.add_argument('--test-num', type=int, default=100)
+    parser.add_argument('--snapshot', type=int, default=50)
+    parser.add_argument('--interval', type=float, default=0)
+
     args = parser.parse_args()
     main(args)

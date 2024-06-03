@@ -91,6 +91,10 @@ class EngineArgs:
 
     # Fairness
     use_fairness_policy:bool =False
+    # accept but not in use
+    use_csric_log:bool = False
+    snapshot: Optional[int] = None
+    num_users: Optional[int] = None
 
     def __post_init__(self):
         if self.tokenizer is None:

@@ -1,4 +1,5 @@
 from typing import Deque, Dict, Iterable, List, Optional, Set, Tuple, Union
+from vllm.sequence import SequenceGroup
 
 class RequestTestProfile:
     def __init__(self, user_id: int, prompt_len: int, now: float):
@@ -6,15 +7,35 @@ class RequestTestProfile:
         self.prompt_len = prompt_len
         self.timestamp: List[float] = [now] # first for request submission. then each as a decode step
         self.is_finish: bool = False
+
     
     def add_timestamp(self, now, is_finish: bool = False):
         self.timestamp.append(now)
         self.is_finish = is_finish
 
+class LLMEngineProfile:
+    def __init__(self):
+        self.step_count = 0
+        self.step_batchsize_list: List[tuple[int]] = [] # each step, how many prefills, how many decodes
+    
+    def add_step(self, running: Deque[SequenceGroup]):
+        self.step_count += 1
+        num_prefills = 0
+        num_decodes = 0
+        for sq in running:
+            if sq.is_prefill():
+                num_prefills += 1
+            else:
+                num_decodes += 1
+        self.step_batchsize_list.append((num_prefills, num_decodes))
+        
 class UserLog:
     def __init__(self):
         self.request_profiles: Dict[int, RequestTestProfile] = {}
         self.user_id_to_request_ids: Dict[int, List[int]] = {}
+        self.summary_count = 0
+        
+        self.engine_profile = LLMEngineProfile()
 
     def submit_request(self, request_id: int, user_id: int, prompt_len: int, now: float):
         self.request_profiles[request_id] = RequestTestProfile(user_id, prompt_len, now)
@@ -27,7 +48,10 @@ class UserLog:
         if request_id not in self.request_profiles:
             return
         self.request_profiles[request_id].add_timestamp(now, is_finish)
-    
+
+    def add_running_schedule(self, running: Deque[SequenceGroup]):
+        self.engine_profile.add_step(running)
+
     def _avg_prompt_throughput(self, request_ids: List[int]):
         total_time = 0
         total_len = 0
@@ -94,9 +118,21 @@ class UserLog:
             return 0
         return total_time / total_len
 
+    def _avg_batch_size(self):
+        total_prefill = 0
+        total_decode = 0
+        for record in self.engine_profile.step_batchsize_list:
+            total_prefill += record[0]
+            total_decode += record[1]
+        avg_prefill = total_prefill / self.engine_profile.step_count
+        avg_decode = total_decode / self.engine_profile.step_count
+        return avg_prefill, avg_decode
+
     def print_summary(self):
+        print(f"----------------------summary {self.summary_count}----------------------")
+        print(f"prefill / decode batchsize: {self._avg_batch_size()}")
         for user_id, request_ids in self.user_id_to_request_ids.items():
-            print(f"\n\nuser_id: {user_id}")
+            print(f"user_id: {user_id}")
             p0 = self._avg_prompt_throughput(request_ids)
             p1 = self._avg_generation_throughput(request_ids)
             p2 = self._avg_first_token_time(request_ids)
@@ -108,6 +144,7 @@ class UserLog:
             print(f"avg_total_time: {p3}")
             print(f"avg_per_token_time: {p4}")
             print(f"{user_id},{p0},{p1},{p2},{p3},{p4}")
+        self.summary_count += 1
 
     def clean_finished(self):
         keys_to_remove = [key for key, value in self.request_profiles.items() if value.is_finish]
@@ -117,3 +154,4 @@ class UserLog:
             for key in keys_to_remove:
                 if key in request_list:
                     request_list.remove(key)
+    

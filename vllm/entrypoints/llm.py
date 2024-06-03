@@ -15,8 +15,10 @@ from vllm.sequence import MultiModalData
 from vllm.usage.usage_lib import UsageContext
 from vllm.utils import Counter
 
-logger = init_logger(__name__)
+from vllm.core.user_log import UserLog
+import time
 
+logger = init_logger(__name__)
 
 class LLM:
     """An LLM for generating texts from given prompts and sampling parameters.
@@ -124,9 +126,23 @@ class LLM:
             disable_custom_all_reduce=disable_custom_all_reduce,
             **kwargs,
         )
+        if "use_csric_log" in kwargs:
+            self.use_csric_log = kwargs["use_csric_log"]
+        else:
+            self.use_csric_log = False
+
+        if self.use_csric_log:
+        # and others...
+            self.user_log = UserLog()
+            self.step_count = 1
+            self.snapshot = kwargs["snapshot"]
+            self.num_users = kwargs["num_users"]
+
         self.llm_engine = LLMEngine.from_engine_args(
-            engine_args, usage_context=UsageContext.LLM_CLASS)
+            engine_args, usage_context=UsageContext.LLM_CLASS, csric_log=self.user_log)
         self.request_counter = Counter()
+        
+
 
     def get_tokenizer(
             self) -> Union[PreTrainedTokenizer, PreTrainedTokenizerFast]:
@@ -147,6 +163,8 @@ class LLM:
         use_tqdm: bool = True,
         lora_request: Optional[LoRARequest] = None,
         multi_modal_data: Optional[MultiModalData] = None,
+        
+        user_id: int = 0
     ) -> List[RequestOutput]:
         """Generates the completions for the input prompts.
 
@@ -181,6 +199,7 @@ class LLM:
             prompt_token_ids,
             lora_request,
             multi_modal_data,
+            user_id = user_id,
         )
 
         # Add requests to the engine and run the engine
@@ -246,6 +265,7 @@ class LLM:
         prompt_token_ids: Optional[List[List[int]]] = None,
         lora_request: Optional[LoRARequest] = None,
         multi_modal_data: Optional[MultiModalData] = None,
+        user_id: int = 0
     ) -> List[dict]:
         """Validates and prepares request data for adding to the engine.
 
@@ -302,6 +322,8 @@ class LLM:
                 lora_request,
                 "multi_modal_data":
                 multi_modal_item,
+                "user_id":
+                user_id,
             })
 
         return requests_data
@@ -313,6 +335,7 @@ class LLM:
         prompt_token_ids: Optional[List[int]],
         lora_request: Optional[LoRARequest] = None,
         multi_modal_data: Optional[MultiModalData] = None,
+        user_id: int = 0
     ) -> None:
         request_id = str(next(self.request_counter))
         self.llm_engine.add_request(request_id,
@@ -320,8 +343,10 @@ class LLM:
                                     params,
                                     prompt_token_ids,
                                     lora_request=lora_request,
-                                    multi_modal_data=multi_modal_data)
-
+                                    multi_modal_data=multi_modal_data,
+                                    user_id=user_id,)
+        if self.use_csric_log:
+            self.user_log.submit_request(int(request_id), user_id, len(prompt_token_ids), time.time())
     def _run_engine(
             self, use_tqdm: bool
     ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
@@ -340,7 +365,11 @@ class LLM:
         while self.llm_engine.has_unfinished_requests():
             step_outputs = self.llm_engine.step()
             for output in step_outputs:
+                is_finish = False
                 if output.finished:
+                    if self.use_csric_log:
+                        self.step_count += 1
+                        is_finish = True
                     outputs.append(output)
                     if use_tqdm:
                         if isinstance(output, RequestOutput):
@@ -350,6 +379,12 @@ class LLM:
                             spd = total_toks / pbar.format_dict["elapsed"]
                             pbar.postfix = f"Generation Speed: {spd:.2f} toks/s"
                         pbar.update(1)
+                if self.use_csric_log:
+                    self.user_log.add_timestamp(int(output.request_id), time.time(), is_finish)
+                    if self.step_count >= self.snapshot * self.num_users:
+                        self.user_log.print_summary()
+                        self.step_count = 1
+                        
         if use_tqdm:
             pbar.close()
         # Sort the outputs by request ID.

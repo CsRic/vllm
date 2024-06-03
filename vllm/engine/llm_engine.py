@@ -35,6 +35,8 @@ from vllm.usage.usage_lib import (UsageContext, is_usage_stats_enabled,
                                   usage_message)
 from vllm.utils import Counter
 
+from vllm.core.user_log import UserLog
+
 logger = init_logger(__name__)
 _LOCAL_LOGGING_INTERVAL_SEC = 5
 
@@ -100,6 +102,7 @@ class LLMEngine:
         log_stats: bool,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
         use_fairness_policy: bool = False,
+        csric_log: Optional[UserLog] = None,
     ) -> None:
         logger.info(
             "Initializing an LLM engine (v%s) with config: "
@@ -220,7 +223,8 @@ class LLMEngine:
         # NOTE: the cache_config here have been updated with the numbers of
         # GPU and CPU blocks, which are profiled in the distributed executor.
         self.scheduler = Scheduler(scheduler_config, cache_config, lora_config, use_fairness_policy=use_fairness_policy)
-
+        self.csric_log = csric_log
+        
         # Metric Logging.
         if self.log_stats:
             self.stat_logger = StatLogger(
@@ -271,6 +275,7 @@ class LLMEngine:
         cls,
         engine_args: EngineArgs,
         usage_context: UsageContext = UsageContext.ENGINE_CONTEXT,
+        csric_log: Optional[UserLog] = None,
     ) -> "LLMEngine":
         """Creates an LLM engine from the engine arguments."""
         # Create the engine configs.
@@ -304,6 +309,7 @@ class LLMEngine:
             log_stats=not engine_args.disable_log_stats,
             usage_context=usage_context,
             use_fairness_policy = engine_args.use_fairness_policy,
+            csric_log=csric_log,
         )
         return engine
 
@@ -675,7 +681,8 @@ class LLMEngine:
             >>>         break
         """
         seq_group_metadata_list, scheduler_outputs = self.scheduler.schedule()
-
+        if self.csric_log is not None:
+            self.csric_log.add_running_schedule(self.scheduler.running)
         if not scheduler_outputs.is_empty():
             execute_model_req = ExecuteModelRequest(
                 seq_group_metadata_list=seq_group_metadata_list,
