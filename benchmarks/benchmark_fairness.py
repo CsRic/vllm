@@ -12,6 +12,7 @@ from vllm import LLM, SamplingParams
 from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
 
 import threading
+import copy
 
 def main(args: argparse.Namespace):
     print(args)
@@ -47,49 +48,74 @@ def main(args: argparse.Namespace):
         min_tokens=args.min_output_len,
     )
     print(sampling_params)
-    dummy_prompt_token_ids = np.random.randint(10000,
-                                               size=(args.test_num,
-                                                     args.input_len))
-    test_prompts = dummy_prompt_token_ids.tolist()
 
-    exit_event = threading.Event()
+    exit_events = []
+    for i in range(args.num_users):
+        exit_events.append(threading.Event())
 
     def run_thread():
-        while not exit_event.is_set():
+        while not all(event.is_set() for event in exit_events):
             llm._run_engine(False)
         llm._run_engine(False)
+        
 
-    def request_thread():
+    def request_thread(**kwargs):
+        user_id = kwargs["user_id"]
+        interval = kwargs["interval"]
+        interval_mod = 1
+        test_num_mod = 1
+        if "interval_mod" in kwargs:
+            interval_mod = kwargs["interval_mod"]
+        if "test_num_mod" in kwargs:
+            test_num_mod = kwargs["test_num_mod"]
+
+        interval *= interval_mod
         current_interval = 0.0
         last_request_time = time.time()
+        dummy_prompt_token_ids = np.random.randint(10000,
+                                               size=(int(args.test_num * test_num_mod),
+                                                     args.input_len))
+        test_prompts = dummy_prompt_token_ids.tolist()
         while len(test_prompts) > 0:
             current_interval += time.time() - last_request_time
             last_request_time = time.time()
-            while len(test_prompts) > 0 and current_interval >= args.interval:
+            while len(test_prompts) > 0 and current_interval >= interval:
                 prompt_token_ids = test_prompts.pop(0)
-                for i in range(args.num_users):
-                    # llm.generate(prompt_token_ids=[prompt_token_ids],
-                    #              sampling_params=sampling_params,
-                    #              use_tqdm=False,
-                    #              user_id=i,)
-                    requests_data = llm._validate_and_prepare_requests(
-                                                        prompts=None,
-                                                        params = sampling_params,
-                                                       prompt_token_ids=[prompt_token_ids],
-                                                       user_id=i)
-                    for request_data in requests_data:
-                        llm._add_request(**request_data)
-                current_interval -= args.interval
-        exit_event.set()
-    
+                requests_data = llm._validate_and_prepare_requests(
+                                                    prompts=None,
+                                                    params = sampling_params,
+                                                   prompt_token_ids=[prompt_token_ids],
+                                                   user_id=user_id)
+                for request_data in requests_data:
+                    llm._add_request(**request_data)
+                current_interval -= interval
+        exit_events[user_id].set()
+
     t1 = threading.Thread(target=run_thread)
-    t2 = threading.Thread(target=request_thread)
+    t_users = []
+
+    if args.num_users == 3:
+        for i in range(args.num_users):
+            t_user = threading.Thread(target=request_thread, kwargs={"user_id": i, "interval": args.interval})
+            t_users.append(t_user)
+
+    else:
+        # t_user = threading.Thread(target=request_thread, kwargs={"user_id": 0, "interval": args.interval, "interval_mod": 1, "test_num_mod": 1})
+        # t_users.append(t_user)
+        # t_user = threading.Thread(target=request_thread, kwargs={"user_id": 1, "interval": args.interval, "interval_mod": 0.5, "test_num_mod": 2})
+        # t_users.append(t_user)
+        for i in range(args.num_users):
+            t_user = threading.Thread(target=request_thread, kwargs={"user_id": i, "interval": args.interval})
+            t_users.append(t_user)
 
     t1.start()
-    t2.start()
-    t2.join()
-    t1.join()
+    for t_user in t_users:
+        t_user.start()
 
+    for t_user in t_users:
+        t_user.join()
+    t1.join()
+    llm.user_log.calc_average_interval(5, save_path=args.user_log_path)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -207,6 +233,8 @@ if __name__ == '__main__':
     parser.add_argument('--test-num', type=int, default=100)
     parser.add_argument('--snapshot', type=int, default=50)
     parser.add_argument('--interval', type=float, default=0)
+    
+    parser.add_argument('--user-log-path', type=str, default="user_log.csv")
 
     args = parser.parse_args()
     main(args)

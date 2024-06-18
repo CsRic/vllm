@@ -55,7 +55,7 @@ class VTC:
         for seq_group in seq_group_list:
             if seq_group.is_finished():
                 self.user_id_to_request[seq_group.user_id].remove(seq_group)
-        
+
 
     def get_highest_priority_request(self):
         sorted_user_ids = sorted(self.vtc, key=self.vtc.get)

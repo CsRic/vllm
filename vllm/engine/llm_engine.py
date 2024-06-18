@@ -222,6 +222,7 @@ class LLMEngine:
         # Create the scheduler.
         # NOTE: the cache_config here have been updated with the numbers of
         # GPU and CPU blocks, which are profiled in the distributed executor.
+        print(f"use_fairness_policy: {use_fairness_policy}")
         self.scheduler = Scheduler(scheduler_config, cache_config, lora_config, use_fairness_policy=use_fairness_policy)
         self.csric_log = csric_log
         

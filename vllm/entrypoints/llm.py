@@ -384,7 +384,7 @@ class LLM:
                     if self.step_count >= self.snapshot * self.num_users:
                         self.user_log.print_summary()
                         self.step_count = 1
-                        
+                        print(self.llm_engine.scheduler.vtc.vtc)
         if use_tqdm:
             pbar.close()
         # Sort the outputs by request ID.
