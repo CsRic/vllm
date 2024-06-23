@@ -381,7 +381,7 @@ class LLM:
                         pbar.update(1)
                 if self.use_csric_log:
                     self.user_log.add_timestamp(int(output.request_id), time.time(), is_finish)
-                    if self.step_count >= self.snapshot * self.num_users:
+                    if self.step_count >= self.snapshot:
                         self.user_log.print_summary()
                         self.step_count = 1
                         print(self.llm_engine.scheduler.vtc.vtc)
@@ -392,3 +392,6 @@ class LLM:
         # its previous requests.
         outputs = sorted(outputs, key=lambda x: int(x.request_id))
         return outputs
+
+    def set_user_priority(self, priority_dict):
+        self.llm_engine.scheduler.vtc.set_user_priority(priority_dict)

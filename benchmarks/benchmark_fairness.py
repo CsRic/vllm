@@ -13,8 +13,11 @@ from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
 
 import threading
 import copy
+import json
 
-def main(args: argparse.Namespace):
+
+
+def main(args: argparse.Namespace, user_config_list):
     print(args)
     llm = LLM(model=args.model,
               tokenizer=args.tokenizer,
@@ -38,17 +41,6 @@ def main(args: argparse.Namespace):
               num_users=args.num_users,
               )
 
-    sampling_params = SamplingParams(
-        n=args.n,
-        temperature=0.0 if args.use_beam_search else 1.0,
-        top_p=1.0,
-        use_beam_search=args.use_beam_search,
-        ignore_eos=True,
-        max_tokens=args.max_output_len,
-        min_tokens=args.min_output_len,
-    )
-    print(sampling_params)
-
     exit_events = []
     for i in range(args.num_users):
         exit_events.append(threading.Event())
@@ -61,52 +53,56 @@ def main(args: argparse.Namespace):
 
     def request_thread(**kwargs):
         user_id = kwargs["user_id"]
-        interval = kwargs["interval"]
-        interval_mod = 1
-        test_num_mod = 1
-        if "interval_mod" in kwargs:
-            interval_mod = kwargs["interval_mod"]
-        if "test_num_mod" in kwargs:
-            test_num_mod = kwargs["test_num_mod"]
+        config = kwargs["config"]
+        
+        for step in config:
+            min_input_len = step['min_input_len']
+            max_input_len = step['max_input_len']
+            min_output_len = step['min_output_len']
+            max_output_len = step['max_output_len']
+            interval = step['interval']
+            request_num = step['request_num']
+            if 'priority' in step:
+                llm.set_user_priority({user_id: step['priority']})
+            sampling_params = SamplingParams(
+                n=args.n,
+                temperature=0.0 if args.use_beam_search else 1.0,
+                top_p=1.0,
+                use_beam_search=args.use_beam_search,
+                ignore_eos=True,
+                max_tokens=max_output_len,
+                min_tokens=min_output_len,
+            )
 
-        interval *= interval_mod
-        current_interval = 0.0
-        last_request_time = time.time()
-        dummy_prompt_token_ids = np.random.randint(10000,
-                                               size=(int(args.test_num * test_num_mod),
-                                                     args.input_len))
-        test_prompts = dummy_prompt_token_ids.tolist()
-        while len(test_prompts) > 0:
-            current_interval += time.time() - last_request_time
+            current_interval = 0.0
             last_request_time = time.time()
-            while len(test_prompts) > 0 and current_interval >= interval:
-                prompt_token_ids = test_prompts.pop(0)
-                requests_data = llm._validate_and_prepare_requests(
-                                                    prompts=None,
-                                                    params = sampling_params,
-                                                   prompt_token_ids=[prompt_token_ids],
-                                                   user_id=user_id)
-                for request_data in requests_data:
-                    llm._add_request(**request_data)
-                current_interval -= interval
+            dummy_prompt_token_ids = np.random.randint(10000,
+                                                   size=(int(request_num),
+                                                         max_input_len))
+
+            test_prompts = dummy_prompt_token_ids.tolist()
+            while len(test_prompts) > 0:
+                current_interval += time.time() - last_request_time
+                last_request_time = time.time()
+                while len(test_prompts) > 0 and current_interval >= interval:
+                    prompt_token_ids = test_prompts.pop(0)
+                    requests_data = llm._validate_and_prepare_requests(
+                                                        prompts=None,
+                                                        params = sampling_params,
+                                                       prompt_token_ids=[prompt_token_ids[0:np.random.randint(min_input_len-1, max_input_len)]],
+                                                       user_id=user_id)
+                    for request_data in requests_data:
+                        llm._add_request(**request_data)
+                    current_interval -= interval
+
         exit_events[user_id].set()
 
     t1 = threading.Thread(target=run_thread)
     t_users = []
 
-    if args.num_users == 3:
-        for i in range(args.num_users):
-            t_user = threading.Thread(target=request_thread, kwargs={"user_id": i, "interval": args.interval})
-            t_users.append(t_user)
-
-    else:
-        # t_user = threading.Thread(target=request_thread, kwargs={"user_id": 0, "interval": args.interval, "interval_mod": 1, "test_num_mod": 1})
-        # t_users.append(t_user)
-        # t_user = threading.Thread(target=request_thread, kwargs={"user_id": 1, "interval": args.interval, "interval_mod": 0.5, "test_num_mod": 2})
-        # t_users.append(t_user)
-        for i in range(args.num_users):
-            t_user = threading.Thread(target=request_thread, kwargs={"user_id": i, "interval": args.interval})
-            t_users.append(t_user)
+    for i in range(args.num_users):
+        t_user = threading.Thread(target=request_thread, kwargs={"user_id": i, "config": user_config_list[i]})
+        t_users.append(t_user)
 
     t1.start()
     for t_user in t_users:
@@ -114,8 +110,43 @@ def main(args: argparse.Namespace):
 
     for t_user in t_users:
         t_user.join()
+
     t1.join()
-    llm.user_log.calc_average_interval(5, save_path=args.user_log_path)
+    llm.user_log.calc_average_interval(10, save_path=args.csric_config_path+".csv")
+
+
+def read_config(file_path, args, user_config_list: list):
+    with open(file_path, 'r') as file:
+        config = json.load(file)
+    
+    server_config = config['server_config']
+    args.model = server_config['model']
+    args.tensor_parallel_size = server_config['tp']
+    args.use_fairness_policy = server_config['use_fairness_policy']
+    args.enable_chunked_prefill = server_config['enable_chunked_prefill']
+    args.gpu_memory_utilization = server_config['gpu_memory_utilization']
+    args.snapshot = server_config['snapshot']
+    
+    users_config = config['users_config']
+    num_users = len(users_config)
+    args.num_users = num_users
+    
+    user_config_list.clear()
+    
+    for i in range(num_users):
+        user_config_list.append(None)
+    
+    user_default = config['user_default']
+
+    for user_config in users_config:
+        user_id = user_config['user_id']
+        if user_config['use_default']:
+            user_config_list[user_id] = copy.deepcopy(user_default)
+        else:
+            user_config_list[user_id] = user_config['requests']
+
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
@@ -225,16 +256,21 @@ if __name__ == '__main__':
 
     parser.add_argument('--use-fairness-policy', '-fair',
                         action='store_true')
+    
+    parser.add_argument('--snapshot', type=int, default=50)
+
+    parser.add_argument('--csric-config-path', type=str)
+
     parser.add_argument('--num-users', 
                         type=int,
                         default=1)
-    parser.add_argument('--min-output-len', type=int, default=1)
-    parser.add_argument('--max-output-len', type=int, default=128)
-    parser.add_argument('--test-num', type=int, default=100)
-    parser.add_argument('--snapshot', type=int, default=50)
-    parser.add_argument('--interval', type=float, default=0)
-    
-    parser.add_argument('--user-log-path', type=str, default="user_log.csv")
 
     args = parser.parse_args()
-    main(args)
+    
+    user_config_list = []
+
+    read_config(args.csric_config_path, args, user_config_list)
+    
+    
+
+    main(args, user_config_list)
