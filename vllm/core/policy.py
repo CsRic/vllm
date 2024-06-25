@@ -37,8 +37,19 @@ class FCFS(Policy):
     ) -> float:
         return now - seq_group.metrics.arrival_time
 
+    def time_elapsed(self, now, seq_group: SequenceGroup):
+        return now - seq_group.metrics.arrival_time
 
-class FairnessPolicy(Policy):
+    def sort_by_time(self, now, seq_groups: Deque[SequenceGroup]):
+        # intermediate step
+        return deque(
+            sorted(
+                seq_groups,
+                key=lambda seq_group: self.time_elapsed(now, seq_group),
+                reverse=True,
+            ))
+
+class FairnessPolicy(FCFS):
     def get_priority(self, vtc: VTC, seq_group: SequenceGroup):
         return vtc.vtc[seq_group.user_id]
     
@@ -55,29 +66,29 @@ class FairnessPolicy(Policy):
             )
         )
 
-    def time_elapsed(self, now, seq_group: SequenceGroup):
-        return now - seq_group.metrics.arrival_time
-
     def get_one_highest_priority(
         self,
-        now,
         vtc: VTC,
-        seq_groups: Deque[SequenceGroup], # assumed sorted by time
+        seq_groups: Deque[SequenceGroup], # assumed sorted by time using sort_by_time
     )->SequenceGroup:
-        compare_with_now = partial(self.time_elapsed, now=now)
         user_id_order = vtc.get_user_id_order()
         for user_id in user_id_order:
             for seq_group in seq_groups:
                 if seq_group.user_id == user_id:
                     return seq_group
 
-    def sort_by_time(self, now, seq_groups: Deque[SequenceGroup]):
-        return deque(
-            sorted(
-                seq_groups,
-                key=lambda seq_group: self.time_elapsed(now, seq_group),
-                reverse=True,
-            ))
+    def get_one_lowest_priority(
+        self,
+        vtc: VTC,
+        seq_groups: Deque[SequenceGroup], # assumed sorted by time
+    ):
+        user_id_order = vtc.get_user_id_order()
+        for user_id in reversed(user_id_order):
+            for seq_group in reversed(seq_groups):
+                if seq_group.user_id == user_id:
+                    return seq_group
+
+
 
 class PolicyFactory:
     _POLICY_REGISTRY = {'fcfs': FCFS,

@@ -50,8 +50,14 @@ class VTC:
                         others_count_min = temp
                 self.vtc[seq_group.user_id] = max(self.vtc[seq_group.user_id], 
                                                   others_count_min)
+        # print(self.vtc)
+    def free_finished_seq_groups(self, seq_group_list: Deque[SequenceGroup]):
+        for seq_group in seq_group_list:
+            if seq_group.is_finished():
+                self.user_id_to_request[seq_group.user_id].remove(seq_group)
 
-    def update_count(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
+    def update_count_legacy(self, seq_group_metadata_list: List[SequenceGroupMetadata]):
+        # update at execution
         for metadata in seq_group_metadata_list:
             if metadata.is_prompt:
                 assert metadata.token_chunk_size is not None
@@ -59,12 +65,13 @@ class VTC:
             else:
                 self.vtc[metadata.user_id] += self.w_q / self.user_id_to_priority[metadata.user_id]
 
-        # print(self.vtc)
-    def free_finished_seq_groups(self, seq_group_list: Deque[SequenceGroup]):
-        for seq_group in seq_group_list:
-            if seq_group.is_finished():
-                self.user_id_to_request[seq_group.user_id].remove(seq_group)
-    
+    def update_count(self, user_id, is_prefill, num_tokens):
+        # update at job submission in scheduler
+        if is_prefill:
+            self.vtc[user_id] += self.w_p * num_tokens / self.user_id_to_priority[user_id]
+        else:
+            self.vtc[user_id] += self.w_q / self.user_id_to_priority[user_id]
+
     def get_user_id_order(self):
         # smallest vtc to highest vtc
         return [k for k, v in sorted(self.vtc.items(), key=lambda item: item[1])]

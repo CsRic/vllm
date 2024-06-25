@@ -422,19 +422,30 @@ class Scheduler:
         # groups to preempt.
         now = time.time()
         if self.use_fairness_policy:
-            running_queue = policy.sort_by_priority(self.vtc, running_queue)
+            running_queue = policy.sort_by_time(now, running_queue)
         else:
             running_queue = policy.sort_by_priority(now, running_queue)
 
         while running_queue:
-            seq_group = running_queue[0]
+            if self.use_fairness_policy:
+                seq_group = policy.get_one_highest_priority(
+                    self.vtc,
+                    running_queue
+                )
+            else:
+                seq_group = running_queue[0]
+
             num_running_tokens = self._get_num_new_tokens(
                 seq_group, SequenceStatus.RUNNING, enable_chunking, budget)
 
             if num_running_tokens == 0:
                 break
 
-            running_queue.popleft()
+            if self.use_fairness_policy:
+                running_queue.remove(seq_group)
+            else:
+                running_queue.popleft()
+
             while not self._can_append_slots(seq_group):
                 budget.subtract_num_batched_tokens(seq_group.request_id,
                                                    num_running_tokens)
@@ -446,7 +457,15 @@ class Scheduler:
 
                 if running_queue:
                     # Preempt the lowest-priority sequence groups.
-                    victim_seq_group = running_queue.pop()
+                    if self.use_fairness_policy:
+                        victim_seq_group = policy.get_one_lowest_priority(
+                            self.vtc,
+                            running_queue
+                        )
+                        running_queue.remove(victim_seq_group)
+                    else:
+                        victim_seq_group = running_queue.pop()
+
                     preempted_mode = self._preempt(victim_seq_group,
                                                    blocks_to_swap_out)
                     if preempted_mode == PreemptionMode.RECOMPUTE:
@@ -486,6 +505,8 @@ class Scheduler:
                     budget.add_num_seqs(seq_group.request_id, num_running_seqs)
                 if curr_loras is not None and seq_group.lora_int_id > 0:
                     curr_loras.add(seq_group.lora_int_id)
+                
+                self.vtc.update_count(seq_group.user_id, is_prefill, num_running_tokens)
 
         return running_queue, SchedulerRunningOutputs(
             decode_seq_groups=decode_seq_groups,
@@ -599,6 +620,8 @@ class Scheduler:
                     ScheduledSequenceGroup(seq_group, token_chunk_size=1))
             budget.add_num_batched_tokens(seq_group.request_id, num_new_tokens)
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
+            
+            self.vtc.update_count(seq_group.user_id, is_prefill, num_new_tokens)
 
         swapped_queue.extendleft(leftover_swapped)
 
@@ -667,13 +690,19 @@ class Scheduler:
         # Copy the queue so that the input queue is not modified.
         now = time.time()
         if self.use_fairness_policy:
-            waiting_queue = policy.sort_by_priority(self.vtc, waiting_queue)
+            waiting_queue = policy.sort_by_time(now, waiting_queue)
         else:
             waiting_queue = policy.sort_by_priority(now, waiting_queue)
 
         leftover_waiting_sequences: Deque[SequenceGroup] = deque()
         while self._passed_delay(time.time()) and waiting_queue:
-            seq_group = waiting_queue[0]
+            if self.use_fairness_policy:
+                seq_group = policy.get_one_highest_priority(
+                    self.vtc,
+                    waiting_queue
+                )
+            else:
+                seq_group = waiting_queue[0]
 
             waiting_seqs = seq_group.get_seqs(status=SequenceStatus.WAITING)
             assert len(waiting_seqs) == 1, (
@@ -694,7 +723,11 @@ class Scheduler:
                 for seq in waiting_seqs:
                     seq.status = SequenceStatus.FINISHED_IGNORED
                 ignored_seq_groups.append(seq_group)
-                waiting_queue.popleft()
+                
+                if self.use_fairness_policy:
+                    waiting_queue.remove(seq_group)
+                else:
+                    waiting_queue.popleft()
                 continue
 
             # If the sequence group cannot be allocated, stop.
@@ -709,7 +742,11 @@ class Scheduler:
                 for seq in waiting_seqs:
                     seq.status = SequenceStatus.FINISHED_IGNORED
                 ignored_seq_groups.append(seq_group)
-                waiting_queue.popleft()
+
+                if self.use_fairness_policy:
+                    waiting_queue.remove(seq_group)
+                else:
+                    waiting_queue.popleft()
                 continue
 
             lora_int_id = 0
@@ -723,7 +760,10 @@ class Scheduler:
                     # We don't have a space for another LoRA, so
                     # we ignore this request for now.
                     leftover_waiting_sequences.appendleft(seq_group)
-                    waiting_queue.popleft()
+                    if self.use_fairness_policy:
+                        waiting_queue.remove(seq_group)
+                    else:
+                        waiting_queue.popleft()
                     continue
 
             num_new_seqs = seq_group.get_max_num_running_seqs()
@@ -735,13 +775,18 @@ class Scheduler:
             # Can schedule this request.
             if curr_loras is not None and lora_int_id > 0:
                 curr_loras.add(lora_int_id)
-            waiting_queue.popleft()
+            if self.use_fairness_policy:
+                waiting_queue.remove(seq_group)
+            else:
+                waiting_queue.popleft()
             self._allocate_and_set_running(seq_group)
             seq_groups.append(
                 ScheduledSequenceGroup(seq_group=seq_group,
                                        token_chunk_size=num_new_tokens))
             budget.add_num_batched_tokens(seq_group.request_id, num_new_tokens)
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
+
+            self.vtc.update_count(seq_group.user_id, True, num_new_tokens)
 
         # Queue requests that couldn't be scheduled.
         waiting_queue.extendleft(leftover_waiting_sequences)
@@ -1056,8 +1101,8 @@ class Scheduler:
                 self.block_manager.mark_blocks_as_computed(
                     scheduled_seq_group.seq_group)
 
-            if self.use_fairness_policy:
-                self.vtc.update_count(seq_group_metadata_list=seq_group_metadata_list)
+            # if self.use_fairness_policy:
+            #     self.vtc.update_count(seq_group_metadata_list=seq_group_metadata_list)
             return seq_group_metadata_list, scheduler_outputs
 
     def fork_seq(self, parent_seq: Sequence, child_seq: Sequence) -> None:
