@@ -105,8 +105,6 @@ def convert_mapping(
             lora_offset: int = long_lora_context.offsets_by_lora_id.get(
                 index_mapping_indices[i], 0)
             long_lora_offsets[i] = lora_offset
-        # SANG-TODO
-        # index_mapping_indices[i] = i
 
     indices_list: List[Union[List[int], torch.Tensor]] = [
         index_mapping_indices, lora_indices, embedding_indices
@@ -312,7 +310,9 @@ class LoRAModel:
             if part_name not in expected_lora_modules:
                 unexpected_modules.append(module)
         # loaded lora's target modules must be a subset of expected_lora_modules
+
         if unexpected_modules:
+            print(unexpected_modules, "modules")
             raise ValueError(
                 f"While loading {lora_dir}, expected"
                 f" target modules in {expected_lora_modules}"
@@ -524,6 +524,12 @@ class LoRAModelManager:
         if self.long_lora_context:
             self.long_lora_context.offsets_by_lora_id.pop(lora_id, None)
         return bool(self._registered_loras.pop(lora_id, None))
+
+    def pin_lora(self, lora_id: int) -> bool:
+        """Pin a LoRAModel in the manager cache."""
+        raise NotImplementedError(
+            "Pinning is not supported in LoRAModelManager."
+            "Use LRUCacheLoRAModelManager for pinning")  # type: ignore
 
     # TODO see if this can be vectorized
     def _set_lora_mapping(self, mapping: LoRAMapping) -> None:
@@ -776,6 +782,26 @@ class LRUCacheLoRAModelManager(LoRAModelManager):
             self._registered_loras.remove_oldest()
             return True
         return False
+
+    def pin_lora(self, lora_id: int) -> bool:
+        """Pin a LoRAModel in the manager cache."""
+        self._pin_lora_in_cpu_cache(lora_id)
+        self._pin_lora_in_gpu_cache(lora_id)
+        return True
+
+    def _pin_lora_in_cpu_cache(self, lora_id: int):
+        try:
+            self._registered_loras.pin(lora_id)
+        except ValueError as err:
+            raise ValueError("Pinning failed. "
+                             f"LoRA {lora_id} is not registered.") from err
+
+    def _pin_lora_in_gpu_cache(self, lora_id: int):
+        if lora_id not in self._active_loras:
+            # move lora to gpu if not already active
+            self.activate_lora(lora_id)
+
+        self._active_loras.pin(lora_id)
 
 
 def create_lora_manager(
