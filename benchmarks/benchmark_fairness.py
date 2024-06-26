@@ -11,6 +11,10 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
 
+from vllm.inputs import (PromptInputs, PromptStrictInputs, TextPrompt,
+                         TextTokensPrompt, TokensPrompt,
+                         parse_and_batch_prompt)
+
 import threading
 import copy
 import json
@@ -47,8 +51,8 @@ def main(args: argparse.Namespace, user_config_list):
 
     def run_thread():
         while not all(event.is_set() for event in exit_events):
-            llm._run_engine(False)
-        llm._run_engine(False)
+            llm._run_engine(use_tqdm=False)
+        llm._run_engine(use_tqdm=False)
         
 
     def request_thread(**kwargs):
@@ -86,13 +90,13 @@ def main(args: argparse.Namespace, user_config_list):
                 last_request_time = time.time()
                 while len(test_prompts) > 0 and current_interval >= interval:
                     prompt_token_ids = test_prompts.pop(0)
-                    requests_data = llm._validate_and_prepare_requests(
-                                                        prompts=None,
-                                                        params = sampling_params,
-                                                       prompt_token_ids=[prompt_token_ids[0:np.random.randint(min_input_len-1, max_input_len)]],
-                                                       user_id=user_id)
-                    for request_data in requests_data:
-                        llm._add_request(**request_data)
+                    inputs = TokensPrompt()
+                    inputs["prompt_token_ids"] = prompt_token_ids[0:np.random.randint(min_input_len-1, max_input_len)]
+                    llm._validate_and_add_requests(
+                                    inputs=inputs,
+                                    params = sampling_params,
+                                    lora_request=None,
+                                   user_id=user_id)
                     current_interval -= interval
 
         exit_events[user_id].set()

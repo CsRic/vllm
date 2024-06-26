@@ -148,6 +148,7 @@ class LLM:
         else:
             self.use_csric_log = False
 
+        self.user_log = None
         if self.use_csric_log:
         # and others...
             self.user_log = UserLog()
@@ -541,6 +542,7 @@ class LLM:
                 params[i] if isinstance(params, Sequence) else params,
                 lora_request=lora_request[i] if isinstance(
                     lora_request, Sequence) else lora_request,
+                user_id=user_id,
             )
 
     def _add_request(
@@ -557,7 +559,16 @@ class LLM:
                                     lora_request=lora_request,
                                     user_id=user_id,)
         if self.use_csric_log:
-            self.user_log.submit_request(int(request_id), user_id, len(prompt_token_ids), time.time())
+            if isinstance(inputs, str):
+                prompt_length = len(inputs)
+            elif isinstance(inputs, dict):
+                if 'prompt' in inputs and isinstance(inputs['prompt'], str):
+                    return len(inputs['prompt'])
+                elif 'prompt_token_ids' in inputs and isinstance(inputs['prompt_token_ids'], list):
+                    return len(inputs['prompt_token_ids'])
+                else:
+                    raise TypeError("Unsupported dictionary type for PromptInputs")
+            self.user_log.submit_request(int(request_id), user_id, len(prompt_length), time.time())
     def _run_engine(
             self, *, use_tqdm: bool
     ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:

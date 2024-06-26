@@ -596,47 +596,8 @@ class LLMEngine:
             arrival_time=arrival_time,
             lora_request=lora_request,
             trace_headers=trace_headers,
-            user_id,
+            user_id=user_id,
         )
-
-        # Create the sequences.
-        block_size = self.cache_config.block_size
-        seq_id = next(self.seq_counter)
-        eos_token_id = None
-        if self.tokenizer:
-            eos_token_id = self.tokenizer.get_lora_tokenizer(
-                lora_request).eos_token_id
-        else:
-            logger.warning("Use None for EOS token id because tokenizer is "
-                           "not initialized")
-        seq = Sequence(seq_id, prompt, prompt_token_ids, block_size,
-                       eos_token_id, lora_request)
-
-        # Create a SequenceGroup based on SamplingParams or PoolingParams
-        if isinstance(params, SamplingParams):
-            seq_group = self._create_sequence_group_with_sampling(
-                request_id,
-                seq,
-                params,
-                arrival_time,
-                lora_request,
-                multi_modal_data,
-            )
-        elif isinstance(params, PoolingParams):
-            seq_group = self._create_sequence_group_with_pooling(
-                request_id,
-                seq,
-                params,
-                arrival_time,
-                lora_request,
-                multi_modal_data,
-            )
-        else:
-            raise ValueError(
-                "Either SamplingParams or PoolingParams must be provided.")
-
-        # Add the sequence group to the scheduler.
-        self.scheduler.add_seq_group(seq_group)
 
     def _create_sequence_group_with_sampling(
         self,

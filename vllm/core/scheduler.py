@@ -510,7 +510,8 @@ class Scheduler:
                 if curr_loras is not None and seq_group.lora_int_id > 0:
                     curr_loras.add(seq_group.lora_int_id)
                 
-                self.vtc.update_count(seq_group.user_id, is_prefill, num_running_tokens)
+                if self.use_fairness_policy:
+                    self.vtc.update_count(seq_group.user_id, is_prefill, num_running_tokens)
 
         return running_queue, SchedulerRunningOutputs(
             decode_seq_groups=decode_seq_groups,
@@ -627,7 +628,8 @@ class Scheduler:
             budget.add_num_batched_tokens(seq_group.request_id, num_new_tokens)
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
             
-            self.vtc.update_count(seq_group.user_id, is_prefill, num_new_tokens)
+            if self.use_fairness_policy:
+                self.vtc.update_count(seq_group.user_id, is_prefill, num_new_tokens)
 
         swapped_queue.extendleft(leftover_swapped)
 
@@ -792,7 +794,8 @@ class Scheduler:
             budget.add_num_batched_tokens(seq_group.request_id, num_new_tokens)
             budget.add_num_seqs(seq_group.request_id, num_new_seqs)
 
-            self.vtc.update_count(seq_group.user_id, True, num_new_tokens)
+            if self.use_fairness_policy:
+                self.vtc.update_count(seq_group.user_id, True, num_new_tokens)
 
         # Queue requests that couldn't be scheduled.
         waiting_queue.extendleft(leftover_waiting_sequences)
